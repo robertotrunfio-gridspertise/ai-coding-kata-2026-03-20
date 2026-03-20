@@ -1,113 +1,102 @@
 package kata;
 
+import java.util.Map;
+
 public class LegacyCheckoutCalculator {
+
+    @FunctionalInterface
+    private interface DiscountFn { int apply(int subtotal); }
+
+    @FunctionalInterface
+    private interface ShippingExtraFn { int apply(String country); }
+
+    @FunctionalInterface
+    private interface CouponFn { int apply(String customerType, int subtotal); }
+
+    private record CustomerConfig(
+            DiscountFn baseDiscount,
+            int freeShipThreshold,     // 0 = no threshold
+            ShippingExtraFn extraShip, // null = none
+            Integer blackFridayBonus   // null = default 5
+    ) {}
+
+    private static final Map<String, CustomerConfig> CUSTOMER_RULES = Map.of(
+            "vip",      new CustomerConfig(s -> 15,                         15000, null,          null),
+            "premium",  new CustomerConfig(s -> s >= 10000 ? 10 : 5,       20000, null,          null),
+            "employee", new CustomerConfig(s -> 30,                         0,     c -> c.equals("IT") ? 0 : 500, 0),
+            "regular",  new CustomerConfig(s -> 0,                          0,     null,          null),
+            "new",      new CustomerConfig(s -> 0,                          0,     null,          null),
+            "partner",  new CustomerConfig(s -> 12,                         15000, null,          3)
+    );
+
+    private static final Map<String, CouponFn> COUPON_RULES = Map.of(
+            "SAVE10",   (ct, s) -> s >= 5000 ? 10 : 0,
+            "VIPONLY",  (ct, s) -> ct.equals("vip") ? 5 : 0,
+            "BULK",     (ct, s) -> s >= 20000 ? 7 : 0,
+            "PARTNER5", (ct, s) -> ct.equals("partner") && s >= 12000 ? 5 : 0
+    );
+
+    private static final Map<String, Integer> COUNTRY_SHIPPING = Map.of("IT", 700, "DE", 900, "US", 1500);
+    private static final Map<String, Integer> COUNTRY_TAX      = Map.of("IT", 22,  "DE", 19,  "US", 7);
+
+    private static final int DEFAULT_SHIPPING = 2500;
+    private static final int MAX_DISCOUNT     = 40;
+    private static final int DEFAULT_BF_BONUS = 5;
 
     public int calculateTotalCents(Order order) {
         int subtotal = order.subtotalCents();
-        int discountPercent = 0;
-        String customerType = safe(order.customerType());
+        String ct      = safe(order.customerType());
         String country = safe(order.country());
-        String coupon = safe(order.couponCode());
+        String coupon  = safe(order.couponCode());
 
-        if (customerType.equals("vip")) {
-            discountPercent = discountPercent + 15;
-        } else if (customerType.equals("premium")) {
-            if (subtotal >= 10000) {
-                discountPercent = discountPercent + 10;
-            } else {
-                discountPercent = discountPercent + 5;
-            }
-        } else if (customerType.equals("employee")) {
-            discountPercent = discountPercent + 30;
-        } else if (customerType.equals("regular") || customerType.equals("new")) {
-            discountPercent = discountPercent + 0;
-        } else {
-            discountPercent = discountPercent + 0;
+        CustomerConfig customer = CUSTOMER_RULES.getOrDefault(ct,
+                new CustomerConfig(s -> 0, 0, null, null));
+
+        // Discount
+        int discount = customer.baseDiscount().apply(subtotal);
+        if (COUPON_RULES.containsKey(coupon)) {
+            discount += COUPON_RULES.get(coupon).apply(ct, subtotal);
         }
-
-        if (coupon.equals("SAVE10")) {
-            if (subtotal >= 5000) {
-                discountPercent = discountPercent + 10;
-            }
-        } else if (coupon.equals("VIPONLY")) {
-            if (customerType.equals("vip")) {
-                discountPercent = discountPercent + 5;
-            }
-        } else if (coupon.equals("BULK")) {
-            if (subtotal >= 20000) {
-                discountPercent = discountPercent + 7;
-            }
-        }
-
         if (order.blackFriday()) {
-            if (!customerType.equals("employee")) {
-                discountPercent = discountPercent + 5;
-            }
+            int bonus = customer.blackFridayBonus() != null ? customer.blackFridayBonus() : DEFAULT_BF_BONUS;
+            discount += bonus;
+        }
+        if (discount > MAX_DISCOUNT) {
+            discount = MAX_DISCOUNT;
         }
 
-        if (discountPercent > 40) {
-            discountPercent = 40;
-        }
+        int discountedSubtotal = subtotal * (100 - discount) / 100;
 
-        int discountedSubtotal = subtotal * (100 - discountPercent) / 100;
-
-        int shippingCents;
-        if (country.equals("IT")) {
-            shippingCents = 700;
-        } else if (country.equals("DE")) {
-            shippingCents = 900;
-        } else if (country.equals("US")) {
-            shippingCents = 1500;
-        } else {
-            shippingCents = 2500;
-        }
-
+        // Shipping
+        int shipping = COUNTRY_SHIPPING.getOrDefault(country, DEFAULT_SHIPPING);
         if (order.blackFriday() && country.equals("US")) {
-            shippingCents = shippingCents + 300;
+            shipping += 300;
         }
-
         if (coupon.equals("FREESHIP") && discountedSubtotal >= 8000) {
-            shippingCents = 0;
+            shipping = 0;
+        }
+        if (customer.freeShipThreshold() > 0 && discountedSubtotal >= customer.freeShipThreshold()) {
+            shipping = 0;
+        }
+        if (customer.extraShip() != null) {
+            shipping += customer.extraShip().apply(country);
         }
 
-        if (customerType.equals("vip") && discountedSubtotal >= 15000) {
-            shippingCents = 0;
+        // Tax
+        int tax = COUNTRY_TAX.getOrDefault(country, 0);
+        if (ct.equals("vip") && country.equals("IT")) {
+            tax = 20;
         }
-
-        if (customerType.equals("premium") && discountedSubtotal >= 20000) {
-            shippingCents = 0;
-        }
-
-        if (customerType.equals("employee") && !country.equals("IT")) {
-            shippingCents = shippingCents + 500;
-        }
-
-        int taxPercent;
-        if (country.equals("IT")) {
-            taxPercent = 22;
-        } else if (country.equals("DE")) {
-            taxPercent = 19;
-        } else if (country.equals("US")) {
-            taxPercent = 7;
-        } else {
-            taxPercent = 0;
-        }
-
-        if (customerType.equals("vip") && country.equals("IT")) {
-            taxPercent = 20;
-        }
-
         if (coupon.equals("TAXFREE") && !country.equals("IT")) {
-            taxPercent = 0;
+            tax = 0;
         }
 
-        int taxCents = discountedSubtotal * taxPercent / 100;
-        int total = discountedSubtotal + shippingCents + taxCents;
+        int taxCents = discountedSubtotal * tax / 100;
+        int total = discountedSubtotal + shipping + taxCents;
 
         if (total < 0) {
             return 0;
         }
-
         return total;
     }
 
