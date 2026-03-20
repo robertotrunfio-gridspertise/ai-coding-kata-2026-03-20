@@ -2,96 +2,98 @@ package kata;
 
 public class LegacyCheckoutCalculator {
 
+    private static final int MAX_DISCOUNT_PERCENT = 40;
+
     public int calculateTotalCents(Order order) {
-        int subtotal = order.subtotalCents();
-        int discountPercent = 0;
         String customerType = safe(order.customerType());
         String country = safe(order.country());
         String coupon = safe(order.couponCode());
+        int subtotal = order.subtotalCents();
 
-        if (customerType.equals("vip")) {
-            discountPercent = discountPercent + 15;
-        } else if (customerType.equals("premium")) {
-            if (subtotal >= 10000) {
-                discountPercent = discountPercent + 10;
-            } else {
-                discountPercent = discountPercent + 5;
-            }
-        } else if (customerType.equals("employee")) {
-            discountPercent = discountPercent + 30;
-        } else if (customerType.equals("regular") || customerType.equals("new")) {
-            discountPercent = discountPercent + 0;
-        } else {
-            discountPercent = discountPercent + 0;
-        }
-
-        if (coupon.equals("SAVE10")) {
-            if (subtotal >= 5000) {
-                discountPercent = discountPercent + 10;
-            }
-        } else if (coupon.equals("VIPONLY")) {
-            if (customerType.equals("vip")) {
-                discountPercent = discountPercent + 5;
-            }
-        } else if (coupon.equals("BULK")) {
-            if (subtotal >= 20000) {
-                discountPercent = discountPercent + 7;
-            }
-        }
-
-        if (order.blackFriday()) {
-            if (!customerType.equals("employee")) {
-                discountPercent = discountPercent + 5;
-            }
-        }
-
-        if (discountPercent > 40) {
-            discountPercent = 40;
-        }
-
+        int discountPercent = computeDiscount(customerType, subtotal, coupon, order.blackFriday());
         int discountedSubtotal = subtotal * (100 - discountPercent) / 100;
 
-        int shippingCents;
-        if (country.equals("IT")) {
-            shippingCents = 700;
-        } else if (country.equals("DE")) {
-            shippingCents = 900;
-        } else if (country.equals("US")) {
-            shippingCents = 1500;
-        } else {
-            shippingCents = 2500;
-        }
+        int shippingCents = computeShipping(customerType, country, coupon, discountedSubtotal, order.blackFriday());
+        int taxCents = computeTax(customerType, country, coupon, discountedSubtotal);
 
-        if (order.blackFriday() && country.equals("US")) {
-            shippingCents = shippingCents + 300;
-        }
+        int total = discountedSubtotal + shippingCents + taxCents;
+        return Math.max(total, 0);
+    }
 
-        if (coupon.equals("FREESHIP") && discountedSubtotal >= 8000) {
-            shippingCents = 0;
-        }
+    private int computeDiscount(String customerType, int subtotal, String coupon, boolean blackFriday) {
+        CustomerRules rules = CustomerRules.forType(customerType);
 
-        if (customerType.equals("vip") && discountedSubtotal >= 15000) {
-            shippingCents = 0;
-        }
+        int discount = baseDiscount(customerType, subtotal, rules);
+        discount += couponDiscount(customerType, subtotal, coupon, blackFriday);
+        discount += blackFridayDiscount(rules, blackFriday);
 
-        if (customerType.equals("premium") && discountedSubtotal >= 20000) {
-            shippingCents = 0;
+        return Math.min(discount, MAX_DISCOUNT_PERCENT);
+    }
+
+    private int baseDiscount(String customerType, int subtotal, CustomerRules rules) {
+        // premium has a tiered base discount
+        if (customerType.equals("premium")) {
+            return subtotal >= 10000 ? 10 : 5;
+        }
+        return rules.baseDiscountPercent();
+    }
+
+    private int couponDiscount(String customerType, int subtotal, String coupon, boolean blackFriday) {
+        return switch (coupon) {
+            case "SAVE10"   -> subtotal >= 5000 ? 10 : 0;
+            case "VIPONLY"  -> customerType.equals("vip") ? 5 : 0;
+            case "BULK"     -> subtotal >= 20000 ? 7 : 0;
+            case "PARTNER5" -> partnerCouponDiscount(customerType, subtotal, blackFriday);
+            default         -> 0;
+        };
+    }
+
+    private int partnerCouponDiscount(String customerType, int subtotal, boolean blackFriday) {
+        if (!customerType.equals("partner") || subtotal < 12000) return 0;
+        return 5;
+    }
+
+    private int blackFridayDiscount(CustomerRules rules, boolean blackFriday) {
+        if (!blackFriday) return 0;
+        return rules.blackFridayDiscountPercent();
+    }
+
+    private int computeShipping(String customerType, String country, String coupon,
+                                 int discountedSubtotal, boolean blackFriday) {
+        int shipping = baseShipping(country);
+
+        if (blackFriday && country.equals("US")) {
+            shipping += 300;
         }
 
         if (customerType.equals("employee") && !country.equals("IT")) {
-            shippingCents = shippingCents + 500;
+            shipping += 500;
         }
 
-        int taxPercent;
-        if (country.equals("IT")) {
-            taxPercent = 22;
-        } else if (country.equals("DE")) {
-            taxPercent = 19;
-        } else if (country.equals("US")) {
-            taxPercent = 7;
-        } else {
-            taxPercent = 0;
+        CustomerRules rules = CustomerRules.forType(customerType);
+        if (rules.freeShippingThresholdCents() > 0
+                && discountedSubtotal >= rules.freeShippingThresholdCents()) {
+            return 0;
         }
+
+        if (coupon.equals("FREESHIP") && discountedSubtotal >= 8000) {
+            return 0;
+        }
+
+        return shipping;
+    }
+
+    private int baseShipping(String country) {
+        return switch (country) {
+            case "IT" -> 700;
+            case "DE" -> 900;
+            case "US" -> 1500;
+            default   -> 2500;
+        };
+    }
+
+    private int computeTax(String customerType, String country, String coupon, int discountedSubtotal) {
+        int taxPercent = baseTax(country);
 
         if (customerType.equals("vip") && country.equals("IT")) {
             taxPercent = 20;
@@ -101,14 +103,16 @@ public class LegacyCheckoutCalculator {
             taxPercent = 0;
         }
 
-        int taxCents = discountedSubtotal * taxPercent / 100;
-        int total = discountedSubtotal + shippingCents + taxCents;
+        return discountedSubtotal * taxPercent / 100;
+    }
 
-        if (total < 0) {
-            return 0;
-        }
-
-        return total;
+    private int baseTax(String country) {
+        return switch (country) {
+            case "IT" -> 22;
+            case "DE" -> 19;
+            case "US" -> 7;
+            default   -> 0;
+        };
     }
 
     private String safe(String value) {
