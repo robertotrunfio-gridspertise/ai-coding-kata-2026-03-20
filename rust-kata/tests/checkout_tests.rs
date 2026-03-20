@@ -36,6 +36,14 @@ fn calculates_expected_totals_for_safety_net_cases() {
         case("vip_it_tax_override", "vip", 10_000, "IT", "", false, 10_900),
         case("tax_us_standard_rate", "regular", 10_000, "US", "", false, 12_200),
         case("employee_save10_hits_40_percent_boundary", "employee", 5_000, "DE", "SAVE10", false, 4_970),
+        case("partner_baseline_de", "partner", 10_000, "DE", "", false, 11_372),
+        case("partner5_at_threshold_de", "partner", 12_000, "DE", "PARTNER5", false, 12_752),
+        case("partner5_below_threshold_de", "partner", 11_999, "DE", "PARTNER5", false, 13_465),
+        case("partner_freeship_at_threshold_de", "partner", 17_046, "DE", "", false, 17_850),
+        case("partner_freeship_below_threshold_de", "partner", 17_045, "DE", "", false, 18_748),
+        case("partner_black_friday_de", "partner", 10_000, "DE", "", true, 11_015),
+        case("partner5_no_effect_on_non_partner", "regular", 12_000, "DE", "PARTNER5", false, 15_180),
+        case("partner5_with_black_friday", "partner", 12_000, "DE", "PARTNER5", true, 12_324),
         case("negative_total_clamped_to_zero", "regular", -10_000, "FR", "", false, 0),
     ];
 

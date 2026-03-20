@@ -14,6 +14,8 @@ const BULK_THRESHOLD_CENTS: i32 = 20_000;
 const FREESHIP_THRESHOLD_CENTS: i32 = 8_000;
 const VIP_FREESHIP_THRESHOLD_CENTS: i32 = 15_000;
 const PREMIUM_FREESHIP_THRESHOLD_CENTS: i32 = 20_000;
+const PARTNER_FREESHIP_THRESHOLD_CENTS: i32 = 15_000;
+const PARTNER5_THRESHOLD_CENTS: i32 = 12_000;
 
 const IT_SHIPPING_CENTS: i32 = 700;
 const DE_SHIPPING_CENTS: i32 = 900;
@@ -41,6 +43,7 @@ enum CustomerKind {
     Vip,
     Premium,
     Employee,
+    Partner,
     Regular,
     New,
     Unknown,
@@ -61,6 +64,7 @@ enum CouponKind {
     Bulk,
     FreeShip,
     TaxFree,
+    Partner5,
     Other,
 }
 
@@ -150,6 +154,7 @@ impl CustomerKind {
             "employee" => Self::Employee,
             "regular" => Self::Regular,
             "new" => Self::New,
+            "partner" => Self::Partner,
             _ => Self::Unknown,
         }
     }
@@ -159,14 +164,19 @@ impl CustomerKind {
             Self::Vip => 15,
             Self::Premium if subtotal_cents >= PREMIUM_DISCOUNT_THRESHOLD_CENTS => 10,
             Self::Premium => 5,
+            Self::Partner => 12,
             Self::Employee => 30,
             Self::Regular | Self::New | Self::Unknown => 0,
         }
     }
 
     fn black_friday_discount_percent(self, black_friday: bool) -> i32 {
-        if black_friday && self != Self::Employee {
-            5
+        if black_friday {
+            match self {
+                Self::Partner => 3,
+                Self::Employee => 0,
+                _ => 5,
+            }
         } else {
             0
         }
@@ -176,6 +186,7 @@ impl CustomerKind {
         match self {
             Self::Vip => Some(VIP_FREESHIP_THRESHOLD_CENTS),
             Self::Premium => Some(PREMIUM_FREESHIP_THRESHOLD_CENTS),
+            Self::Partner => Some(PARTNER_FREESHIP_THRESHOLD_CENTS),
             Self::Employee | Self::Regular | Self::New | Self::Unknown => None,
         }
     }
@@ -234,6 +245,7 @@ impl CouponKind {
             "BULK" => Self::Bulk,
             "FREESHIP" => Self::FreeShip,
             "TAXFREE" => Self::TaxFree,
+            "PARTNER5" => Self::Partner5,
             _ => Self::Other,
         }
     }
@@ -243,7 +255,8 @@ impl CouponKind {
             Self::Save10 if order.subtotal_cents >= SAVE10_THRESHOLD_CENTS => 10,
             Self::VipOnly if order.customer_kind == CustomerKind::Vip => 5,
             Self::Bulk if order.subtotal_cents >= BULK_THRESHOLD_CENTS => 7,
-            Self::Save10 | Self::VipOnly | Self::Bulk | Self::FreeShip | Self::TaxFree | Self::Other => 0,
+            Self::Partner5 if order.customer_kind == CustomerKind::Partner && order.subtotal_cents >= PARTNER5_THRESHOLD_CENTS => 5,
+            Self::Save10 | Self::VipOnly | Self::Bulk | Self::FreeShip | Self::TaxFree | Self::Partner5 | Self::Other => 0,
         }
     }
 
