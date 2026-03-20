@@ -10,109 +10,140 @@ type Order struct {
 	BlackFriday   bool
 }
 
+type customerConfig struct {
+	baseDiscount      func(subtotal int) int
+	freeShipThreshold int                    // discounted subtotal threshold for free shipping; 0 = none
+	extraShip         func(country string) int // nil = no extra shipping
+	blackFridayBonus  *int                   // nil = default 5; pointer to override
+}
+
+func intPtr(n int) *int { return &n }
+
+var customerRules = map[string]customerConfig{
+	"vip": {
+		baseDiscount:      func(_ int) int { return 15 },
+		freeShipThreshold: 15000,
+	},
+	"premium": {
+		baseDiscount: func(s int) int {
+			if s >= 10000 {
+				return 10
+			}
+			return 5
+		},
+		freeShipThreshold: 20000,
+	},
+	"employee": {
+		baseDiscount: func(_ int) int { return 30 },
+		extraShip: func(c string) int {
+			if c != "IT" {
+				return 500
+			}
+			return 0
+		},
+		blackFridayBonus: intPtr(0),
+	},
+	"regular": {baseDiscount: func(_ int) int { return 0 }},
+	"new":     {baseDiscount: func(_ int) int { return 0 }},
+	"partner": {
+		baseDiscount:      func(_ int) int { return 12 },
+		freeShipThreshold: 15000,
+		blackFridayBonus:  intPtr(3),
+	},
+}
+
+var couponRules = map[string]func(customerType string, subtotal int) int{
+	"SAVE10":  func(_ string, s int) int { if s >= 5000 { return 10 }; return 0 },
+	"VIPONLY": func(ct string, _ int) int { if ct == "vip" { return 5 }; return 0 },
+	"BULK":    func(_ string, s int) int { if s >= 20000 { return 7 }; return 0 },
+	"PARTNER5": func(ct string, s int) int {
+		if ct == "partner" && s >= 12000 {
+			return 5
+		}
+		return 0
+	},
+}
+
+var countryShipping = map[string]int{
+	"IT": 700,
+	"DE": 900,
+	"US": 1500,
+}
+
+var countryTax = map[string]int{
+	"IT": 22,
+	"DE": 19,
+	"US": 7,
+}
+
+const (
+	defaultShipping = 2500
+	maxDiscount     = 40
+	defaultBFBonus  = 5
+)
+
 func CalculateTotalCents(order Order) int {
 	subtotal := order.SubtotalCents
-	customerType := safe(order.CustomerType)
+	ct := safe(order.CustomerType)
 	country := safe(order.Country)
 	coupon := safe(order.CouponCode)
 
-	discountPercent := 0
+	customer := customerRules[ct]
 
-	if customerType == "vip" {
-		discountPercent += 15
-	} else if customerType == "premium" {
-		if subtotal >= 10000 {
-			discountPercent += 10
-		} else {
-			discountPercent += 5
-		}
-	} else if customerType == "employee" {
-		discountPercent += 30
-	} else if customerType == "regular" || customerType == "new" {
-		discountPercent += 0
-	} else {
-		discountPercent += 0
+	// Discount
+	discount := 0
+	if customer.baseDiscount != nil {
+		discount = customer.baseDiscount(subtotal)
 	}
-
-	if coupon == "SAVE10" {
-		if subtotal >= 5000 {
-			discountPercent += 10
-		}
-	} else if coupon == "VIPONLY" {
-		if customerType == "vip" {
-			discountPercent += 5
-		}
-	} else if coupon == "BULK" {
-		if subtotal >= 20000 {
-			discountPercent += 7
-		}
+	if couponFn, ok := couponRules[coupon]; ok {
+		discount += couponFn(ct, subtotal)
 	}
-
 	if order.BlackFriday {
-		if customerType != "employee" {
-			discountPercent += 5
+		bonus := defaultBFBonus
+		if customer.blackFridayBonus != nil {
+			bonus = *customer.blackFridayBonus
 		}
+		discount += bonus
+	}
+	if discount > maxDiscount {
+		discount = maxDiscount
 	}
 
-	if discountPercent > 40 {
-		discountPercent = 40
+	discountedSubtotal := subtotal * (100 - discount) / 100
+
+	// Shipping
+	shipping, ok := countryShipping[country]
+	if !ok {
+		shipping = defaultShipping
 	}
-
-	discountedSubtotal := subtotal * (100 - discountPercent) / 100
-
-	shippingCents := 2500
-	if country == "IT" {
-		shippingCents = 700
-	} else if country == "DE" {
-		shippingCents = 900
-	} else if country == "US" {
-		shippingCents = 1500
-	}
-
 	if order.BlackFriday && country == "US" {
-		shippingCents += 300
+		shipping += 300
 	}
-
 	if coupon == "FREESHIP" && discountedSubtotal >= 8000 {
-		shippingCents = 0
+		shipping = 0
+	}
+	if customer.freeShipThreshold > 0 && discountedSubtotal >= customer.freeShipThreshold {
+		shipping = 0
+	}
+	if customer.extraShip != nil {
+		shipping += customer.extraShip(country)
 	}
 
-	if customerType == "vip" && discountedSubtotal >= 15000 {
-		shippingCents = 0
+	// Tax
+	tax := countryTax[country]
+	if ct == "vip" && country == "IT" {
+		tax = 20
 	}
-
-	if customerType == "premium" && discountedSubtotal >= 20000 {
-		shippingCents = 0
-	}
-
-	if customerType == "employee" && country != "IT" {
-		shippingCents += 500
-	}
-
-	taxPercent := 0
-	if country == "IT" {
-		taxPercent = 22
-	} else if country == "DE" {
-		taxPercent = 19
-	} else if country == "US" {
-		taxPercent = 7
-	}
-
-	if customerType == "vip" && country == "IT" {
-		taxPercent = 20
-	}
-
 	if coupon == "TAXFREE" && country != "IT" {
-		taxPercent = 0
+		tax = 0
 	}
 
-	taxCents := discountedSubtotal * taxPercent / 100
-	total := discountedSubtotal + shippingCents + taxCents
+	taxCents := discountedSubtotal * tax / 100
+	total := discountedSubtotal + shipping + taxCents
 
 	if total < 0 {
 		return 0
 	}
-
 	return total
 }
 
